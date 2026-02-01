@@ -1,28 +1,48 @@
 """Agent module initialization."""
 
-from .agent_definitions import (
-    SCHEDULER_AGENT, SCHEDULER_AGENT_INSTRUCTIONS,
-    REPORTING_AGENT, REPORTING_AGENT_INSTRUCTIONS,
-    ASSISTANT_AGENT, ASSISTANT_AGENT_INSTRUCTIONS
-)
-from .agent_strategies import (
-    ChatbotSelectionStrategy,
-    ChatbotTerminationStrategy,
-    AutomatedWorkflowSelectionStrategy,
-    AutomatedWorkflowTerminationStrategy
-)
-from .agent_manager import create_or_reuse_agent
+try:
+    from .agent_definitions_new import (
+        CONTRACT_PARSER_AGENT,
+        LEGAL_RESEARCH_AGENT,
+        COMPLIANCE_CHECKER_AGENT,
+        RISK_ASSESSMENT_AGENT,
+        LEGAL_MEMO_AGENT,
+        ASSISTANT_AGENT,
+        get_agent_config,
+        get_agent_instructions,
+        list_agents,
+    )
+except ImportError:
+    try:
+        from .agent_definitions import (
+            SCHEDULER_AGENT as CONTRACT_PARSER_AGENT,
+            ASSISTANT_AGENT,
+        )
+    except ImportError:
+        CONTRACT_PARSER_AGENT = None
+
+try:
+    from .agent_strategies_new import (
+        select_agent,
+        get_agent_sequence,
+        AgentOrchestrator,
+    )
+except ImportError:
+    try:
+        from .agent_strategies import (
+            ChatbotSelectionStrategy,
+            ChatbotTerminationStrategy,
+        )
+    except ImportError:
+        ChatbotSelectionStrategy = None
 
 __all__ = [
-    'SCHEDULER_AGENT',
-    'SCHEDULER_AGENT_INSTRUCTIONS',
-    'REPORTING_AGENT',
-    'REPORTING_AGENT_INSTRUCTIONS',
+    'CONTRACT_PARSER_AGENT',
+    'LEGAL_RESEARCH_AGENT',
+    'COMPLIANCE_CHECKER_AGENT',
+    'RISK_ASSESSMENT_AGENT',
+    'LEGAL_MEMO_AGENT',
     'ASSISTANT_AGENT',
-    'ASSISTANT_AGENT_INSTRUCTIONS',
-    'ChatbotSelectionStrategy',
-    'ChatbotTerminationStrategy',
-    'AutomatedWorkflowSelectionStrategy',
-    'AutomatedWorkflowTerminationStrategy',
-    'create_or_reuse_agent'
+    'get_agent_config',
+    'list_agents',
 ]
