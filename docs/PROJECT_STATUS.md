@@ -8,7 +8,7 @@
 ## 📊 Project Overview
 
 ### Mission
-Transform RiskWise procurement risk analysis platform into **LegalMind** - an AI-powered legal contract analysis system using **Google Cloud & Gemini API only** (for Google Gemini Hackathon).
+Transform the legacy procurement risk analysis platform into **LegalMind** - an AI-powered legal contract analysis system using **Google Cloud & Gemini API only** (for Google Gemini Hackathon).
 
 ### Architecture Change
 ```
