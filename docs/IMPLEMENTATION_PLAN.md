@@ -3,7 +3,7 @@
 ## Project Overview
 
 **Project Name:** LegalMind - AI Legal Research & Contract Analysis Platform  
-**Original Project:** RiskWise (Procurement Risk Analysis)  
+**Original Project:** Legacy procurement risk system  
 **Target Platform:** Google Gemini Hackathon  
 **Transformation Type:** Full stack migration from Azure to Google Cloud + Domain pivot from procurement to legal
 
