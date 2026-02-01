@@ -1,63 +1,149 @@
-"""Configuration settings for the application."""
+"""
+LegalMind Configuration Settings
+Google Cloud / Gemini API Configuration
+"""
 
 import os
-from semantic_kernel.agents import AzureAIAgentSettings
-from azure.ai.projects import AIProjectClient
-from azure.identity import DefaultAzureCredential
+from typing import Optional
+from pydantic_settings import BaseSettings
+from functools import lru_cache
 
-def initialize_ai_agent_settings():
-    """Initializes AI Agent settings from environment variables.
+
+class Settings(BaseSettings):
+    """Application settings loaded from environment variables."""
+    
+    # -------------------------------------------------------------------------
+    # Gemini API Configuration
+    # -------------------------------------------------------------------------
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.0-flash"
+    
+    # -------------------------------------------------------------------------
+    # Google Cloud Project Configuration
+    # -------------------------------------------------------------------------
+    google_cloud_project: str = ""
+    google_application_credentials: Optional[str] = None
+    
+    # -------------------------------------------------------------------------
+    # Firestore Configuration
+    # -------------------------------------------------------------------------
+    firestore_database: str = "(default)"
+    
+    # -------------------------------------------------------------------------
+    # Cloud Storage Configuration
+    # -------------------------------------------------------------------------
+    gcs_bucket_name: str = "legalmind-contracts"
+    gcs_contracts_folder: str = "contracts"
+    gcs_documents_folder: str = "generated-documents"
+    
+    # -------------------------------------------------------------------------
+    # Application Settings
+    # -------------------------------------------------------------------------
+    app_name: str = "LegalMind"
+    app_env: str = "development"
+    debug: bool = True
+    
+    # API Server
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
+    
+    # Session Configuration
+    session_timeout_minutes: int = 60
+    max_tokens_per_request: int = 8192
+    
+    # Rate Limiting
+    rate_limit_requests_per_minute: int = 30
+    
+    # -------------------------------------------------------------------------
+    # Feature Flags
+    # -------------------------------------------------------------------------
+    enable_search_grounding: bool = True
+    enable_thinking_logs: bool = True
+    enable_citations: bool = True
+    
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+        case_sensitive = False
+
+
+@lru_cache()
+def get_settings() -> Settings:
+    """Get cached settings instance.
     
     Returns:
-        AzureAIAgentSettings: The initialized AI Agent settings
+        Settings: Application settings
+    """
+    return Settings()
+
+
+def get_gemini_api_key() -> str:
+    """Get the Gemini API key from settings.
+    
+    Returns:
+        str: The Gemini API key
         
     Raises:
-        ValueError: If required environment variables are missing
+        ValueError: If the API key is not configured
     """
-    # Get Azure AI Agent settings from environment variables
-    project_name = os.getenv("AZURE_AI_AGENT_PROJECT_NAME")
-    project_connection_string = os.getenv("AZURE_AI_AGENT_PROJECT_CONNECTION_STRING")
-    model_deployment_name = os.getenv("AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME")
-    
-    # Validate required environment variables
-    if not all([project_connection_string, model_deployment_name]):
+    settings = get_settings()
+    if not settings.gemini_api_key:
         raise ValueError(
-            "Missing required environment variables. Please set "
-            "AZURE_AI_AGENT_PROJECT_CONNECTION_STRING and "
-            "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME."
+            "Missing required environment variable: GEMINI_API_KEY. "
+            "Please set it in your .env file or environment."
+        )
+    return settings.gemini_api_key
+
+
+def get_google_cloud_project() -> str:
+    """Get the Google Cloud project ID.
+    
+    Returns:
+        str: The Google Cloud project ID
+        
+    Raises:
+        ValueError: If the project ID is not configured
+    """
+    settings = get_settings()
+    if not settings.google_cloud_project:
+        raise ValueError(
+            "Missing required environment variable: GOOGLE_CLOUD_PROJECT. "
+            "Please set it in your .env file or environment."
+        )
+    return settings.google_cloud_project
+
+
+def get_gcs_bucket_name() -> str:
+    """Get the Google Cloud Storage bucket name.
+    
+    Returns:
+        str: The GCS bucket name
+    """
+    return get_settings().gcs_bucket_name
+
+
+def validate_settings() -> bool:
+    """Validate that all required settings are configured.
+    
+    Returns:
+        bool: True if all settings are valid
+        
+    Raises:
+        ValueError: If any required settings are missing
+    """
+    settings = get_settings()
+    
+    required = [
+        ("GEMINI_API_KEY", settings.gemini_api_key),
+        ("GOOGLE_CLOUD_PROJECT", settings.google_cloud_project),
+    ]
+    
+    missing = [name for name, value in required if not value]
+    
+    if missing:
+        raise ValueError(
+            f"Missing required environment variables: {', '.join(missing)}. "
+            "Please check your .env file."
         )
     
-    # Create AI Agent settings
-    ai_agent_settings = AzureAIAgentSettings(
-        project_name=project_name,
-        service_connection_string=project_connection_string,
-        model_deployment_name=model_deployment_name
-    )
-    
-    return ai_agent_settings
-
-def get_database_connection_string():
-    """Gets the database connection string from environment variables.
-    
-    Returns:
-        str: The database connection string
-        
-    Raises:
-        ValueError: If the connection string is missing
-    """
-    connection_string = os.getenv("DB_CONNECTION_STRING")
-    if not connection_string:
-        raise ValueError("Missing required environment variable: DB_CONNECTION_STRING")
-    return connection_string
-
-def get_project_client():
-    project_connection_string = os.getenv("AZURE_AI_AGENT_PROJECT_CONNECTION_STRING")
-    # Connect to the Azure AI Foundry project
-    project_client = AIProjectClient.from_connection_string(
-        credential=DefaultAzureCredential
-            (exclude_environment_credential=True,
-            exclude_managed_identity_credential=True),
-        conn_str=project_connection_string
-    )
-
-    return project_client
+    return True
