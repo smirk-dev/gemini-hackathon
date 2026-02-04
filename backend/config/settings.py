@@ -6,6 +6,7 @@ Google Cloud / Gemini API Configuration
 import os
 from typing import Optional
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from functools import lru_cache
 
 
@@ -43,6 +44,10 @@ class Settings(BaseSettings):
     app_name: str = "LegalMind"
     app_env: str = "development"
     debug: bool = True
+
+    # Security Settings
+    api_secret_key: str = ""
+    allowed_origins: str = ""
     
     # API Server
     api_host: str = "0.0.0.0"
@@ -61,6 +66,28 @@ class Settings(BaseSettings):
     enable_search_grounding: bool = True
     enable_thinking_logs: bool = True
     enable_citations: bool = True
+
+    @field_validator("gemini_api_key", mode="after")
+    @classmethod
+    def validate_api_key(cls, v, info):
+        """Validate API key is set if not using Vertex AI."""
+        if not v and not info.data.get("use_vertex_ai"):
+            raise ValueError(
+                "Missing required environment variable: GEMINI_API_KEY. "
+                "Please set it in your .env.local file or set USE_VERTEX_AI=true to use Vertex AI."
+            )
+        return v
+
+    @field_validator("google_cloud_project", mode="after")
+    @classmethod
+    def validate_project(cls, v):
+        """Validate Google Cloud project is configured."""
+        if not v:
+            raise ValueError(
+                "Missing required environment variable: GOOGLE_CLOUD_PROJECT. "
+                "Please set it in your .env.local file."
+            )
+        return v
     
     class Config:
         env_file = ".env.local"
@@ -90,11 +117,6 @@ def get_gemini_api_key() -> str:
     settings = get_settings()
     if settings.use_vertex_ai:
         return ""
-    if not settings.gemini_api_key:
-        raise ValueError(
-            "Missing required environment variable: GEMINI_API_KEY. "
-            "Please set it in your .env file or set USE_VERTEX_AI=true."
-        )
     return settings.gemini_api_key
 
 
@@ -108,11 +130,6 @@ def get_google_cloud_project() -> str:
         ValueError: If the project ID is not configured
     """
     settings = get_settings()
-    if not settings.google_cloud_project:
-        raise ValueError(
-            "Missing required environment variable: GOOGLE_CLOUD_PROJECT. "
-            "Please set it in your .env file or environment."
-        )
     return settings.google_cloud_project
 
 
