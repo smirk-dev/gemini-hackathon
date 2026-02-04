@@ -14,7 +14,7 @@
 
 <br/>
 
-[🚀 Quick Start](#-quick-start) • [📚 Features](#-core-features) • [🏗️ Architecture](#️-architecture) • [📖 Docs](#-documentation) • [💻 Demo](#-use-cases)
+[🚀 Quick Start](#-quick-start) • [🌍 Deployment](#-deployment) • [📚 Features](#-core-features) • [🏗️ Architecture](#️-architecture) • [📖 Docs](#-documentation) • [💻 Demo](#-use-cases)
 
 </div>
 
@@ -213,6 +213,49 @@ npm run dev
 | **Web App** | http://localhost:3000 |
 | **API** | http://localhost:8000 |
 | **API Docs** | http://localhost:8000/docs |
+
+---
+
+## 🌍 **Deployment**
+
+Deploy LegalMind to **Google Cloud Platform** in minutes:
+
+### **Quick Deploy (5 minutes)**
+```bash
+# 1. Run setup script to configure GCP
+./setup-gcp.ps1          # Windows
+# or
+./setup-gcp.sh           # macOS/Linux
+
+# 2. Add GitHub secrets (from script output)
+# - GCP_PROJECT_ID
+# - WIF_PROVIDER
+# - WIF_SERVICE_ACCOUNT
+# - FIREBASE_SERVICE_ACCOUNT
+
+# 3. Push to main branch
+git push origin main
+
+# GitHub Actions automatically deploys:
+# - Backend → Cloud Run
+# - Frontend → Firebase Hosting
+```
+
+### **Architecture**
+- **Frontend**: Firebase Hosting (CDN + auto-scaling)
+- **Backend**: Google Cloud Run (serverless, auto-scaling)
+- **Database**: Firestore (99.999% SLA)
+- **Storage**: Cloud Storage (for PDFs & documents)
+
+### **Estimated Costs**
+- Cloud Run: ~$0.40 per million requests
+- Firebase Hosting: Free tier (10 GB/month)
+- Firestore: Free tier (25k reads + writes/day)
+- **Total**: $5-15/month for moderate usage
+
+📖 **Full Deployment Guides:**
+- [Quick Deploy Guide](QUICK_DEPLOY.md) - 5-minute setup
+- [Complete Deployment Guide](DEPLOYMENT_GUIDE.md) - Advanced configuration
 
 ---
 
