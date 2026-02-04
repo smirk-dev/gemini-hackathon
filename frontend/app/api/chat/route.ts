@@ -4,6 +4,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { message, session_id, contract_id } = body;
+    const apiKey = process.env.BACKEND_API_KEY;
 
     if (!message) {
       return NextResponse.json(
@@ -25,6 +26,7 @@ export async function POST(request: Request) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
         },
       });
 
@@ -49,6 +51,7 @@ export async function POST(request: Request) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(apiKey ? { 'X-API-Key': apiKey } : {}),
       },
       body: JSON.stringify({
         message,
