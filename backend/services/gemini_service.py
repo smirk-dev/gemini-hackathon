@@ -58,6 +58,73 @@ def _convert_json_schema_to_gemini(schema: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+def _convert_json_schema_to_vertex(schema: Dict[str, Any]):
+    """Convert JSON Schema format to Vertex AI Schema objects."""
+    if not isinstance(schema, dict):
+        return schema
+
+    try:
+        from vertexai.generative_models import Schema, Type
+    except ImportError:
+        return None
+
+    type_mapping = {
+        "object": Type.OBJECT,
+        "string": Type.STRING,
+        "number": Type.NUMBER,
+        "integer": Type.INTEGER,
+        "boolean": Type.BOOLEAN,
+        "array": Type.ARRAY,
+    }
+
+    schema_type = type_mapping.get(schema.get("type", "string"), Type.STRING)
+    properties = None
+    items = None
+
+    if schema.get("properties") and isinstance(schema["properties"], dict):
+        properties = {
+            k: _convert_json_schema_to_vertex(v)
+            for k, v in schema["properties"].items()
+        }
+
+    if schema.get("items") and isinstance(schema["items"], dict):
+        items = _convert_json_schema_to_vertex(schema["items"])
+
+    return Schema(
+        type_=schema_type,
+        description=schema.get("description"),
+        properties=properties,
+        items=items,
+        required=schema.get("required"),
+        enum=schema.get("enum"),
+    )
+
+
+def _build_vertex_tools(tools: List[Dict[str, Any]]):
+    """Build Vertex AI Tool objects from tool definitions."""
+    try:
+        from vertexai.generative_models import Tool, FunctionDeclaration
+    except ImportError:
+        return []
+
+    vertex_tools = []
+    for tool in tools:
+        parameters = None
+        if "parameters" in tool:
+            parameters = _convert_json_schema_to_vertex(tool["parameters"])
+            if parameters is None:
+                return []
+
+        func_decl = FunctionDeclaration(
+            name=tool["name"],
+            description=tool.get("description"),
+            parameters=parameters,
+        )
+        vertex_tools.append(Tool(function_declarations=[func_decl]))
+
+    return vertex_tools
+
+
 class GeminiService:
     """Service for interacting with the Gemini API."""
     
@@ -68,10 +135,19 @@ class GeminiService:
         self._model = None
         self._tools: Dict[str, Callable] = {}
         self._tool_declarations: List[Dict] = []
+        self.use_vertex = self.settings.use_vertex_ai
     
     def _configure_api(self):
         """Configure the Gemini API with credentials."""
-        genai.configure(api_key=get_gemini_api_key())
+        if self.settings.use_vertex_ai:
+            import vertexai
+            vertexai.init(project=self.settings.google_cloud_project, location="us-central1")
+            print(f"✅ Using Vertex AI (project: {self.settings.google_cloud_project})")
+        else:
+            api_key = get_gemini_api_key()
+            if api_key:
+                genai.configure(api_key=api_key)
+                print("✅ Using AI Studio with API key")
     
     @property
     def model(self):
@@ -93,18 +169,34 @@ class GeminiService:
             
             # Add tools if any registered
             if self._tool_declarations:
-                model_kwargs["tools"] = self._tool_declarations
+                if self.use_vertex:
+                    model_kwargs["tools"] = _build_vertex_tools(self._tool_declarations)
+                else:
+                    model_kwargs["tools"] = self._tool_declarations
             
             # Add Google Search grounding if enabled
             if self.settings.enable_search_grounding:
-                from google.generativeai.types import Tool
-                google_search = Tool.from_google_search_retrieval()
+                if self.use_vertex:
+                    from vertexai.generative_models import Tool
+                    google_search = Tool.from_google_search_retrieval()
+                else:
+                    from google.generativeai.types import Tool
+                    google_search = Tool.from_google_search_retrieval()
+
                 if "tools" in model_kwargs:
                     model_kwargs["tools"].append(google_search)
                 else:
                     model_kwargs["tools"] = [google_search]
             
-            self._model = genai.GenerativeModel(**model_kwargs)
+            if self.use_vertex:
+                from vertexai.generative_models import GenerativeModel
+                self._model = GenerativeModel(**model_kwargs)
+            else:
+                if self.use_vertex:
+                    from vertexai.generative_models import GenerativeModel
+                    self._model = GenerativeModel(**model_kwargs)
+                else:
+                    self._model = genai.GenerativeModel(**model_kwargs)
         
         return self._model
     
@@ -172,18 +264,31 @@ class GeminiService:
         try:
             # Create model with custom system instruction if provided
             if system_instruction:
-                model = genai.GenerativeModel(
-                    model_name=self.settings.gemini_model,
-                    system_instruction=system_instruction,
-                    tools=self._tool_declarations if self._tool_declarations else None,
-                )
+                if self.use_vertex:
+                    from vertexai.generative_models import GenerativeModel
+                    tools = _build_vertex_tools(self._tool_declarations) if self._tool_declarations else None
+                    model = GenerativeModel(
+                        model_name=self.settings.gemini_model,
+                        system_instruction=system_instruction,
+                        tools=tools,
+                    )
+                else:
+                    model = genai.GenerativeModel(
+                        model_name=self.settings.gemini_model,
+                        system_instruction=system_instruction,
+                        tools=self._tool_declarations if self._tool_declarations else None,
+                    )
             else:
                 model = self.model
             
             # Build generation config with temperature override
             gen_config = None
             if temperature is not None:
-                gen_config = genai.GenerationConfig(temperature=temperature)
+                if self.use_vertex:
+                    from vertexai.generative_models import GenerationConfig
+                    gen_config = GenerationConfig(temperature=temperature)
+                else:
+                    gen_config = genai.GenerationConfig(temperature=temperature)
             
             # Handle chat vs single generation
             if chat_history:
@@ -396,10 +501,16 @@ class GeminiService:
             Response with text, function_calls, and citations
         """
         try:
-            # Build generation config
-            gen_config = genai.GenerationConfig(
-                temperature=temperature if temperature is not None else 0.7,
-            )
+            # Build generation config using appropriate SDK
+            if self.use_vertex:
+                from vertexai.generative_models import GenerationConfig
+                gen_config = GenerationConfig(
+                    temperature=temperature if temperature is not None else 0.7,
+                )
+            else:
+                gen_config = genai.GenerationConfig(
+                    temperature=temperature if temperature is not None else 0.7,
+                )
             
             # Build model kwargs
             model_kwargs = {
@@ -410,30 +521,37 @@ class GeminiService:
             if system_instruction:
                 model_kwargs["system_instruction"] = system_instruction
             
-            # Convert tools to Gemini format
+            # Convert tools to SDK-specific format
             model_tools = []
             if tools:
-                for tool in tools:
-                    # Extract function declaration info
-                    func_decl = {
-                        "name": tool["name"],
-                        "description": tool["description"],
-                    }
-                    
-                    # Convert parameters from JSON Schema to Gemini format
-                    if "parameters" in tool:
-                        func_decl["parameters"] = _convert_json_schema_to_gemini(tool["parameters"])
-                    
-                    model_tools.append(func_decl)
+                if self.use_vertex:
+                    model_tools = _build_vertex_tools(tools)
+                else:
+                    for tool in tools:
+                        func_decl = {
+                            "name": tool["name"],
+                            "description": tool["description"],
+                        }
+                        if "parameters" in tool:
+                            func_decl["parameters"] = _convert_json_schema_to_gemini(tool["parameters"])
+                        model_tools.append(func_decl)
             
             if use_search_grounding:
-                from google.generativeai.types import Tool
+                if self.use_vertex:
+                    from vertexai.generative_models import Tool
+                else:
+                    from google.generativeai.types import Tool
                 model_tools.append(Tool.from_google_search_retrieval())
             
             if model_tools:
                 model_kwargs["tools"] = model_tools
             
-            model = genai.GenerativeModel(**model_kwargs)
+            # Use appropriate SDK based on configuration
+            if self.use_vertex:
+                from vertexai.generative_models import GenerativeModel
+                model = GenerativeModel(**model_kwargs)
+            else:
+                model = genai.GenerativeModel(**model_kwargs)
             
             # Generate content
             response = await asyncio.to_thread(
@@ -492,8 +610,12 @@ class GeminiService:
             Response with text, function_calls, citations
         """
         try:
-            # Build generation config
-            gen_config = genai.GenerationConfig(temperature=0.7)
+            # Build generation config using appropriate SDK
+            if self.use_vertex:
+                from vertexai.generative_models import GenerationConfig
+                gen_config = GenerationConfig(temperature=0.7)
+            else:
+                gen_config = genai.GenerationConfig(temperature=0.7)
             
             # Build model
             model_kwargs = {
@@ -504,32 +626,48 @@ class GeminiService:
             if system_instruction:
                 model_kwargs["system_instruction"] = system_instruction
             
-            # Convert tools to Gemini format
+            # Convert tools to SDK-specific format
             if tools:
-                model_tools = []
-                for tool in tools:
-                    func_decl = {
-                        "name": tool["name"],
-                        "description": tool["description"],
-                    }
-                    if "parameters" in tool:
-                        func_decl["parameters"] = _convert_json_schema_to_gemini(tool["parameters"])
-                    model_tools.append(func_decl)
-                model_kwargs["tools"] = model_tools
+                if self.use_vertex:
+                    model_kwargs["tools"] = _build_vertex_tools(tools)
+                else:
+                    model_tools = []
+                    for tool in tools:
+                        func_decl = {
+                            "name": tool["name"],
+                            "description": tool["description"],
+                        }
+                        if "parameters" in tool:
+                            func_decl["parameters"] = _convert_json_schema_to_gemini(tool["parameters"])
+                        model_tools.append(func_decl)
+                    model_kwargs["tools"] = model_tools
             
-            model = genai.GenerativeModel(**model_kwargs)
+            if self.use_vertex:
+                from vertexai.generative_models import GenerativeModel
+                model = GenerativeModel(**model_kwargs)
+            else:
+                model = genai.GenerativeModel(**model_kwargs)
             
             # Build function response parts
             response_parts = []
             for fr in function_results:
-                response_parts.append(
-                    genai.protos.Part(
-                        function_response=genai.protos.FunctionResponse(
+                if self.use_vertex:
+                    from vertexai.generative_models import Part, FunctionResponse
+                    response_parts.append(
+                        Part.from_function_response(
                             name=fr["name"],
                             response={"result": json.dumps(fr["result"])}
                         )
                     )
-                )
+                else:
+                    response_parts.append(
+                        genai.protos.Part(
+                            function_response=genai.protos.FunctionResponse(
+                                name=fr["name"],
+                                response={"result": json.dumps(fr["result"])}
+                            )
+                        )
+                    )
             
             # Generate follow-up
             response = await asyncio.to_thread(
@@ -587,16 +725,31 @@ class GeminiService:
             Parsed JSON response
         """
         try:
-            generation_config = genai.GenerationConfig(
-                response_mime_type="application/json",
-                response_schema=response_schema,
-            )
+            if self.use_vertex:
+                from vertexai.generative_models import GenerationConfig
+                generation_config = GenerationConfig(
+                    response_mime_type="application/json",
+                    response_schema=response_schema,
+                )
+            else:
+                generation_config = genai.GenerationConfig(
+                    response_mime_type="application/json",
+                    response_schema=response_schema,
+                )
             
-            model = genai.GenerativeModel(
-                model_name=self.settings.gemini_model,
-                system_instruction=system_instruction,
-                generation_config=generation_config,
-            )
+            if self.use_vertex:
+                from vertexai.generative_models import GenerativeModel
+                model = GenerativeModel(
+                    model_name=self.settings.gemini_model,
+                    system_instruction=system_instruction,
+                    generation_config=generation_config,
+                )
+            else:
+                model = genai.GenerativeModel(
+                    model_name=self.settings.gemini_model,
+                    system_instruction=system_instruction,
+                    generation_config=generation_config,
+                )
             
             response = await asyncio.to_thread(
                 model.generate_content,
