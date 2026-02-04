@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import uuid
+import asyncio
 from datetime import datetime
 
 from managers.chatbot_manager_new import get_chatbot_manager, ChatbotManager
@@ -22,59 +23,7 @@ router = APIRouter()
 
 
 # =============================================================================
-# Simple In-Memory Rate Limiting & Request De-dupe
-# =============================================================================
-
-_rate_limit_store: Dict[str, List[float]] = {}
-_response_cache: Dict[str, Dict[str, Any]] = {}
-
-
-def _get_client_key(request: Request) -> str:
-    """Build a key for rate limiting and caching."""
-    return request.client.host if request.client else "unknown"
-
-
-def _rate_limit_check(request: Request, action: str) -> None:
-    """Raise 429 if rate limit exceeded for the client."""
-    settings = get_settings()
-    limit = max(settings.rate_limit_requests_per_minute, 1)
-    window_seconds = 60
-
-    key = f"{_get_client_key(request)}:{action}"
-    now = datetime.utcnow().timestamp()
-    timestamps = _rate_limit_store.get(key, [])
-    # Keep only last minute
-    timestamps = [t for t in timestamps if now - t < window_seconds]
-    if len(timestamps) >= limit:
-        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait and retry.")
-    timestamps.append(now)
-    _rate_limit_store[key] = timestamps
-
-
-def _get_cache_key(request: ChatMessage) -> str:
-    """Create a deterministic cache key for duplicate chat requests."""
-    return f"{request.session_id}:{request.contract_id or ''}:{request.message.strip()}"
-
-
-def _get_cached_response(cache_key: str, ttl_seconds: int = 30) -> Optional[Dict[str, Any]]:
-    entry = _response_cache.get(cache_key)
-    if not entry:
-        return None
-    if datetime.utcnow().timestamp() - entry["ts"] > ttl_seconds:
-        _response_cache.pop(cache_key, None)
-        return None
-    return entry["response"]
-
-
-def _set_cached_response(cache_key: str, response: Dict[str, Any]) -> None:
-    _response_cache[cache_key] = {
-        "ts": datetime.utcnow().timestamp(),
-        "response": response,
-    }
-
-
-# =============================================================================
-# Request/Response Models
+# Request/Response Models (MUST BE FIRST - used in utility functions)
 # =============================================================================
 
 class ChatMessage(BaseModel):
@@ -137,6 +86,58 @@ class SessionInfo(BaseModel):
 
 
 # =============================================================================
+# Simple In-Memory Rate Limiting & Request De-dupe
+# =============================================================================
+
+_rate_limit_store: Dict[str, List[float]] = {}
+_response_cache: Dict[str, Dict[str, Any]] = {}
+
+
+def _get_client_key(request: Request) -> str:
+    """Build a key for rate limiting and caching."""
+    return request.client.host if request.client else "unknown"
+
+
+def _rate_limit_check(request: Request, action: str) -> None:
+    """Raise 429 if rate limit exceeded for the client."""
+    settings = get_settings()
+    limit = max(settings.rate_limit_requests_per_minute, 1)
+    window_seconds = 60
+
+    key = f"{_get_client_key(request)}:{action}"
+    now = datetime.utcnow().timestamp()
+    timestamps = _rate_limit_store.get(key, [])
+    # Keep only last minute
+    timestamps = [t for t in timestamps if now - t < window_seconds]
+    if len(timestamps) >= limit:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please wait and retry.")
+    timestamps.append(now)
+    _rate_limit_store[key] = timestamps
+
+
+def _get_cache_key(request: ChatMessage) -> str:
+    """Create a deterministic cache key for duplicate chat requests."""
+    return f"{request.session_id}:{request.contract_id or ''}:{request.message.strip()}"
+
+
+def _get_cached_response(cache_key: str, ttl_seconds: int = 30) -> Optional[Dict[str, Any]]:
+    entry = _response_cache.get(cache_key)
+    if not entry:
+        return None
+    if datetime.utcnow().timestamp() - entry["ts"] > ttl_seconds:
+        _response_cache.pop(cache_key, None)
+        return None
+    return entry["response"]
+
+
+def _set_cached_response(cache_key: str, response: Dict[str, Any]) -> None:
+    _response_cache[cache_key] = {
+        "ts": datetime.utcnow().timestamp(),
+        "response": response,
+    }
+
+
+# =============================================================================
 # Chat Endpoints
 # =============================================================================
 
@@ -186,7 +187,16 @@ async def create_session(http_request: Request):
         _rate_limit_check(http_request, "session")
         session_id = str(uuid.uuid4())
         chatbot = get_chatbot_manager()
-        await chatbot.initialize_session(session_id)
+        
+        # Initialize session with timeout
+        try:
+            await asyncio.wait_for(
+                chatbot.initialize_session(session_id),
+                timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            print(f"⚠️ Session initialization timed out for {session_id}, returning cached response")
+            # Return response anyway - session exists locally even if Firestore write timed out
         
         return {
             "success": True,
