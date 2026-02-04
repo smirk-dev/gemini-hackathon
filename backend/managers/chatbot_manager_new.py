@@ -89,13 +89,23 @@ class _SimpleThinkingLogger:
     def __init__(self, firestore: FirestoreService):
         self._firestore = firestore
 
-    async def log_thinking(self, session_id: str, agent_name: str, thinking: str):
+    async def log_thinking(
+        self,
+        session_id: str,
+        agent_name: str,
+        thinking: str,
+        output_text: str = "",
+        tool_calls: Optional[List[Dict[str, Any]]] = None,
+        duration_ms: Optional[int] = None,
+    ):
         """Persist a minimal thinking log entry."""
         return await self._firestore.log_agent_thinking(
             session_id=session_id,
             agent_name=agent_name,
             input_text=thinking,
-            output_text="",
+            output_text=output_text,
+            tool_calls=tool_calls or [],
+            duration_ms=duration_ms,
         )
 
 
@@ -238,6 +248,25 @@ class ChatbotManager:
             if session_id in self.chat_sessions:
                 return self.chat_sessions[session_id]
             
+            # Try to load existing session from Firestore
+            existing_session = await self.firestore.get_session(session_id)
+            if existing_session:
+                messages = await self.firestore.get_messages(session_id, limit=200)
+                session = {
+                    "id": session_id,
+                    "created_at": existing_session.get("created_at", datetime.now()),
+                    "last_activity": existing_session.get("last_activity", datetime.now()),
+                    "messages": messages or [],
+                    "active_contract_id": existing_session.get("contract_id")
+                    or existing_session.get("active_contract_id"),
+                    "orchestrator": AgentOrchestrator(),
+                    "current_agent": ASSISTANT_AGENT,
+                }
+
+                self.chat_sessions[session_id] = session
+                self._processing_locks[session_id] = asyncio.Lock()
+                return session
+
             print(f"Creating new session: {session_id}")
             
             # Create session in Firestore
@@ -284,6 +313,10 @@ class ChatbotManager:
         """
         # Initialize or get session
         session = await self.initialize_session(session_id)
+        
+        # Ensure message history is loaded for context
+        if not session.get("messages"):
+            session["messages"] = await self.firestore.get_messages(session_id, limit=200)
         
         # Get processing lock for this session
         if session_id not in self._processing_locks:
@@ -438,15 +471,25 @@ class ChatbotManager:
                 context_parts.append(f"Active Contract: {contract.get('name', 'Unknown')}")
                 context_parts.append(f"Contract Type: {contract.get('type', 'Unknown')}")
                 if contract.get("parties"):
-                    context_parts.append(f"Parties: {', '.join(contract['parties'])}")
+                    # Extract party names (handle both string list and dict list formats)
+                    parties = contract['parties']
+                    if parties and isinstance(parties[0], dict):
+                        party_names = [p.get('name', str(p)) for p in parties]
+                    else:
+                        party_names = [str(p) for p in parties]
+                    context_parts.append(f"Parties: {', '.join(party_names)}")
         
-        # Add recent conversation history (last 5 messages)
-        recent_messages = session.get("messages", [])[-10:]
+        # Ensure we have recent messages (rehydrate if needed)
+        if not session.get("messages"):
+            session["messages"] = await self.firestore.get_messages(session["id"], limit=200)
+
+        # Add recent conversation history (last 20 messages)
+        recent_messages = session.get("messages", [])[-20:]
         if recent_messages:
-            context_parts.append("\nRecent Conversation:")
+            context_parts.append("\nRecent Conversation (most recent last):")
             for msg in recent_messages:
                 role = "User" if msg["role"] == "user" else "Assistant"
-                content = msg["content"][:200] + "..." if len(msg["content"]) > 200 else msg["content"]
+                content = msg["content"][:500] + "..." if len(msg["content"]) > 500 else msg["content"]
                 context_parts.append(f"{role}: {content}")
         
         return "\n".join(context_parts)
@@ -484,6 +527,9 @@ class ChatbotManager:
 {context}
 """
         
+        start_time = time.time()
+        tool_call_logs: List[Dict[str, Any]] = []
+
         # Log thinking
         await self.thinking_logger.log_thinking(
             session_id=session_id,
@@ -492,14 +538,25 @@ class ChatbotManager:
         )
         
         try:
-            # Call Gemini with function calling
-            response = await self.gemini.generate_with_tools(
-                prompt=user_message,
-                system_instruction=system_prompt,
-                tools=tools if tools else None,
-                use_search_grounding=use_search,
-                temperature=temperature,
-            )
+            # Call Gemini with function calling - with 30 second timeout
+            try:
+                response = await asyncio.wait_for(
+                    self.gemini.generate_with_tools(
+                        prompt=user_message,
+                        system_instruction=system_prompt,
+                        tools=tools if tools else None,
+                        use_search_grounding=use_search,
+                        temperature=temperature,
+                    ),
+                    timeout=30.0
+                )
+            except asyncio.TimeoutError:
+                print(f"⚠️ Gemini API timeout for agent {agent_name}")
+                return {
+                    "message": "I'm taking longer than expected to process your request. Please try again or rephrase your question.",
+                    "citations": [],
+                    "tools_used": [],
+                }
             
             # Process function calls if any
             tools_used = []
@@ -531,6 +588,11 @@ class ChatbotManager:
                     
                     # Execute the tool
                     result = await self._execute_tool(tool_name, arguments)
+                    tool_call_logs.append({
+                        "name": tool_name,
+                        "arguments": arguments,
+                        "result": str(result)[:1000],
+                    })
                     function_results.append({
                         "name": tool_name,
                         "result": result,
@@ -549,6 +611,16 @@ class ChatbotManager:
             # Extract final text and citations
             message_text = final_response.get("text", "I'm sorry, I couldn't generate a response.")
             citations = final_response.get("citations", [])
+
+            duration_ms = int((time.time() - start_time) * 1000)
+            await self.thinking_logger.log_thinking(
+                session_id=session_id,
+                agent_name=agent_name,
+                thinking="Completed response generation",
+                output_text=message_text,
+                tool_calls=tool_call_logs,
+                duration_ms=duration_ms,
+            )
             
             return {
                 "message": message_text,
