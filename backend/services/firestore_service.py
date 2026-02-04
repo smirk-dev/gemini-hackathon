@@ -8,6 +8,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import asyncio
+import uuid
 from functools import lru_cache
 
 from config.settings import get_settings
@@ -63,16 +64,27 @@ class FirestoreService:
         data["created_at"] = firestore.SERVER_TIMESTAMP
         data["updated_at"] = firestore.SERVER_TIMESTAMP
         
-        if document_id:
-            doc_ref = self.client.collection(collection).document(document_id)
-            await asyncio.to_thread(doc_ref.set, data)
-            return document_id
-        else:
-            doc_ref = await asyncio.to_thread(
-                self.client.collection(collection).add,
-                data
-            )
-            return doc_ref[1].id
+        try:
+            if document_id:
+                doc_ref = self.client.collection(collection).document(document_id)
+                await asyncio.wait_for(
+                    asyncio.to_thread(doc_ref.set, data),
+                    timeout=10.0
+                )
+                return document_id
+            else:
+                doc_ref = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.client.collection(collection).add,
+                        data
+                    ),
+                    timeout=10.0
+                )
+                return doc_ref[1].id
+        except asyncio.TimeoutError:
+            print(f"⚠️ Firestore timeout writing to {collection}/{document_id}")
+            # Return the document_id anyway for local session management
+            return document_id or str(data.get('id', uuid.uuid4()))
     
     async def get_document(
         self,
@@ -88,14 +100,21 @@ class FirestoreService:
         Returns:
             Document data or None if not found
         """
-        doc_ref = self.client.collection(collection).document(document_id)
-        doc = await asyncio.to_thread(doc_ref.get)
-        
-        if doc.exists:
-            data = doc.to_dict()
-            data["id"] = doc.id
-            return data
-        return None
+        try:
+            doc_ref = self.client.collection(collection).document(document_id)
+            doc = await asyncio.wait_for(
+                asyncio.to_thread(doc_ref.get),
+                timeout=10.0
+            )
+            
+            if doc.exists:
+                data = doc.to_dict()
+                data["id"] = doc.id
+                return data
+            return None
+        except asyncio.TimeoutError:
+            print(f"⚠️ Firestore timeout reading {collection}/{document_id}")
+            return None
     
     async def update_document(
         self,
