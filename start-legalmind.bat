@@ -30,12 +30,12 @@ echo.
 
 REM Start backend
 echo [1/2] Starting Backend API (port 8000)...
-start "LegalMind Backend" cmd /k "cd /d "!cd!\backend" && python main_new.py"
+start "LegalMind Backend" cmd /k "cd /d %~dp0backend && python main_new.py"
 timeout /t 3 /nobreak
 
 REM Start frontend
 echo [2/2] Starting Frontend (port 3000)...
-start "LegalMind Frontend" cmd /k "cd /d "!cd!\frontend" && npm run dev"
+start "LegalMind Frontend" cmd /k "cd /d %~dp0frontend && npm run dev"
 timeout /t 3 /nobreak
 
 echo.
