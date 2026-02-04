@@ -88,6 +88,40 @@ app.add_middleware(
 app.include_router(router, prefix="/api")
 
 
+# Global exception handler for better error responses
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handle validation errors with user-friendly messages."""
+    return JSONResponse(
+        status_code=400,
+        content={
+            "success": False,
+            "error": "Invalid request format",
+            "details": str(exc),
+        },
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handle unexpected errors with user-friendly messages."""
+    print(f"Unhandled exception: {exc}")
+    import traceback
+    traceback.print_exc()
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "error": "An unexpected error occurred. Please try again later.",
+            "details": str(exc) if hasattr(exc, '__str__') else "Unknown error",
+        },
+    )
+
+
 # WebSocket endpoint for real-time chat
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
