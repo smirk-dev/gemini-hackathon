@@ -24,9 +24,27 @@ async def lifespan(app: FastAPI):
     print(f"Project ID: {settings.google_cloud_project}")
     print(f"Environment: {'Development' if settings.debug else 'Production'}")
     
-    # Initialize chatbot manager
-    chatbot = get_chatbot_manager()
-    print("ChatbotManager initialized")
+    # Initialize chatbot manager (with timeout to prevent indefinite hangs)
+    print("Initializing ChatbotManager...")
+    try:
+        # Run chatbot initialization in a thread with timeout
+        def init_chatbot():
+            try:
+                return get_chatbot_manager()
+            except Exception as e:
+                print(f"⚠️ Error initializing ChatbotManager: {e}")
+                return None
+        
+        # Try to initialize with 10 second timeout
+        await asyncio.wait_for(
+            asyncio.to_thread(init_chatbot),
+            timeout=10.0
+        )
+        print("✅ ChatbotManager initialized")
+    except asyncio.TimeoutError:
+        print("⚠️ ChatbotManager initialization timed out - continuing with limited functionality")
+    except Exception as e:
+        print(f"⚠️ ChatbotManager initialization warning: {e}")
     
     yield
     
@@ -34,8 +52,16 @@ async def lifespan(app: FastAPI):
     print("Shutting down LegalMind API...")
     
     # Clean up chat sessions
-    chatbot = get_chatbot_manager()
-    await chatbot.cleanup_old_sessions(max_age_minutes=0)
+    try:
+        chatbot = get_chatbot_manager()
+        await asyncio.wait_for(
+            chatbot.cleanup_old_sessions(max_age_minutes=0),
+            timeout=5.0
+        )
+    except asyncio.TimeoutError:
+        print("⚠️ Session cleanup timed out")
+    except Exception as e:
+        print(f"⚠️ Cleanup error: {e}")
     
     await asyncio.sleep(0.5)
     print("Shutdown complete")
