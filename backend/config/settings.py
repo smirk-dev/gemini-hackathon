@@ -74,11 +74,14 @@ class Settings(BaseSettings):
     @classmethod
     def validate_api_key(cls, v, info):
         """Validate API key is set if not using Vertex AI."""
-        if not v and not info.data.get("use_vertex_ai"):
-            raise ValueError(
-                "Missing required environment variable: GEMINI_API_KEY. "
-                "Please set it in your .env.local file or set USE_VERTEX_AI=true to use Vertex AI."
-            )
+        # Check if using Vertex AI (from environment or already validated)
+        use_vertex_ai = os.getenv("USE_VERTEX_AI", "false").lower() == "true"
+        if not use_vertex_ai and not info.data.get("use_vertex_ai"):
+            if not v:
+                raise ValueError(
+                    "Missing required environment variable: GEMINI_API_KEY. "
+                    "Please set it in your .env.local file or set USE_VERTEX_AI=true to use Vertex AI."
+                )
         return v
 
     @field_validator("google_cloud_project", mode="after")
