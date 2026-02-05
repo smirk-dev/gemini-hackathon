@@ -101,8 +101,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API router
-app.include_router(router, prefix="/api")
+# Include API router (no prefix - backend is a standalone service)
+app.include_router(router)
 
 
 # Global exception handlers for better error responses

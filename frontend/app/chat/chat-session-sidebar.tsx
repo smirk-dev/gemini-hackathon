@@ -19,6 +19,8 @@ import { DropdownMenuContent } from '@/components/ui/dropdown-menu';
 import { DropdownMenu } from '@/components/ui/dropdown-menu';
 import { DropdownMenuTrigger } from '@radix-ui/react-dropdown-menu';
 
+const apiBase = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+
 interface Session {
   id?: string;
   session_id?: string;
@@ -29,7 +31,7 @@ interface Session {
 }
 
 interface ChatSessionSidebarProps {
-  variant?: 'inset' | 'overlay';
+  variant?: 'inset' | 'sidebar' | 'floating';
   onSessionSelect: (sessionId: string) => void;
 }
 
@@ -52,9 +54,9 @@ export function ChatSessionSidebar({ variant, onSessionSelect }: ChatSessionSide
   React.useEffect(() => {
     const fetchSessions = async () => {
       try {
-        const response = await fetch('/api/sessions');
+        const response = await fetch(`${apiBase}/chat/sessions`);
         const data = await response.json();
-        if (data.status === 'success' && Array.isArray(data.sessions)) {
+        if (data.success && Array.isArray(data.sessions)) {
           setSessions(data.sessions);
         } else {
           setSessions([]); // Ensure sessions is an array even if API response is unexpected
