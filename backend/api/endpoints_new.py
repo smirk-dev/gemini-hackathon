@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 class ChatMessage(BaseModel):
     """Model for chat messages."""
-    session_id: str
+    session_id: Optional[str] = None
     message: str
     contract_id: Optional[str] = None
 
@@ -175,6 +175,11 @@ async def chat_endpoint(request: ChatMessage, http_request: Request):
         if not request.message or not request.message.strip():
             raise HTTPException(status_code=400, detail="Message cannot be empty")
 
+        # Generate session ID if not provided
+        session_id = request.session_id
+        if not session_id:
+            session_id = str(uuid.uuid4())
+
         cache_key = _get_cache_key(request)
         cached = _get_cached_response(cache_key)
         if cached:
@@ -184,14 +189,14 @@ async def chat_endpoint(request: ChatMessage, http_request: Request):
         try:
             response = await asyncio.wait_for(
                 chatbot.process_message(
-                    session_id=request.session_id,
+                    session_id=session_id,
                     user_message=request.message,
                     contract_id=request.contract_id,
                 ),
                 timeout=30.0,
             )
         except asyncio.TimeoutError:
-            logger.error("Chat request timed out for session %s", request.session_id)
+            logger.error("Chat request timed out for session %s", session_id)
             raise HTTPException(
                 status_code=504,
                 detail="Request timeout - the analysis took too long. Please try again.",
