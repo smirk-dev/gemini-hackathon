@@ -18,18 +18,22 @@ def main():
     
     settings = get_settings()
     
+    # Cloud Run sets PORT env var, default to 8000 for local dev
+    port = int(os.environ.get("PORT", 8000))
+    
     print("=" * 60)
     print("LegalMind API Server")
     print("=" * 60)
     print(f"Project: {settings.google_cloud_project}")
     print(f"Debug Mode: {settings.debug}")
-    print(f"API Docs: http://localhost:8000/docs")
+    print(f"Port: {port}")
+    print(f"API Docs: http://localhost:{port}/docs")
     print("=" * 60)
     
     uvicorn.run(
         "api.app_new:app",
         host="0.0.0.0",
-        port=8000,
+        port=port,
         reload=settings.debug,
         log_level="info" if settings.debug else "warning",
     )
