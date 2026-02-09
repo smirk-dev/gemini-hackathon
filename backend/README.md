@@ -89,7 +89,6 @@ python main_new.py
 ```
 GOOGLE_CLOUD_PROJECT=your_project_id
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
-GEMINI_API_KEY=your_gemini_api_key
 GCS_BUCKET_NAME=legalmind-contracts
 FIRESTORE_DATABASE=(default)
 ```
