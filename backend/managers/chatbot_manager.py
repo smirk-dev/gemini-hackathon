@@ -2235,6 +2235,8 @@ class ChatbotManager:
                 conversation_id = self.chat_sessions[session_id]["conversation_id"]
                 
                 # Query the event log for political risk JSON data
+                if not pyodbc:
+                    raise ImportError("pyodbc not available")
                 conn = pyodbc.connect(self.connection_string)
                 cursor = conn.cursor()
                 
