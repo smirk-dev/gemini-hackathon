@@ -24,7 +24,6 @@ EXPOSE 8000
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV USE_VERTEX_AI=true
-ENV GOOGLE_CLOUD_PROJECT=legalmind-486106
 # Note: PORT is set by Cloud Run (8080), don't override it here
 
 # Run the application
