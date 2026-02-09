@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { MountainIcon, Moon, Sun } from 'lucide-react';
+import { Moon, Sun } from 'lucide-react';
 import { SearchForm } from './search-form';
 import { Button } from './ui/button';
 import { useTheme } from 'next-themes';
@@ -20,9 +20,12 @@ export function SiteHeader() {
     <header className="sticky top-0 z-50 w-full border-b bg-background text-foreground">
       <div className="flex h-16 items-center justify-between mx-6">
         <Link href="/chat" className="flex items-center gap-2" prefetch={false}>
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary font-semibold">
-            LM
-          </div>
+          <Image src="/assets/image.jpeg"
+            alt="LegalMind Logo"
+            width={40}
+            height={40}
+            className="rounded-lg"
+          />
           <span className="font-semibold text-primary">LegalMind</span>
         </Link>
         <nav className="hidden items-center gap-6 text-sm font-medium md:flex">
