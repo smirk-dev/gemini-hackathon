@@ -6,7 +6,7 @@ Google Cloud / Gemini API Configuration
 import os
 from typing import Optional
 from pydantic_settings import BaseSettings
-from pydantic import field_validator
+from pydantic import field_validator, Field
 from functools import lru_cache
 
 
@@ -18,7 +18,11 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
-    use_vertex_ai: bool = True  # Default to Vertex AI for production (Cloud Run has proper credentials)
+    # Use Vertex AI by default - reads from USE_VERTEX_AI env var (true/false)
+    use_vertex_ai: bool = Field(
+        default=True,
+        description="Use Vertex AI instead of public Gemini API. Set USE_VERTEX_AI=true/false in environment"
+    )
     
     # -------------------------------------------------------------------------
     # Google Cloud Project Configuration
@@ -70,6 +74,20 @@ class Settings(BaseSettings):
     enable_thinking_logs: bool = True
     enable_citations: bool = True
 
+    @field_validator("use_vertex_ai", mode="before")
+    @classmethod
+    def read_use_vertex_ai(cls, v):
+        """Read USE_VERTEX_AI from environment variable."""
+        # If called during init, v is the field default
+        # Check environment variable first
+        env_val = os.getenv("USE_VERTEX_AI", "true").lower()
+        if env_val in ("true", "1", "yes"):
+            return True
+        elif env_val in ("false", "0", "no"):
+            return False
+        # Default to True (use Vertex AI) for production
+        return True
+
     @field_validator("gemini_api_key", mode="after")
     @classmethod
     def validate_api_key(cls, v, info):
@@ -92,10 +110,27 @@ class Settings(BaseSettings):
             )
         return v
     
+    def model_post_init(self, __context):
+        """Ensure USE_VERTEX_AI environment variable is respected after initialization."""
+        env_val = os.getenv("USE_VERTEX_AI", "true").lower()
+        if env_val in ("true", "1", "yes"):
+            self.use_vertex_ai = True
+            print(f"✅ USE_VERTEX_AI=true from environment - using Vertex AI")
+        elif env_val in ("false", "0", "no"):
+            self.use_vertex_ai = False
+            print(f"⚠️ USE_VERTEX_AI=false from environment - using public Gemini API")
+        else:
+            self.use_vertex_ai = True
+            print(f"✅ USE_VERTEX_AI not set, defaulting to True - using Vertex AI")
+    
     class Config:
         env_file = ".env.local"
         env_file_encoding = "utf-8"
         case_sensitive = False
+        # Extra config to ensure environment variables are read
+        extra = "allow"
+        # Populate from environment variables even if defaults are set
+        validate_assignment = True
 
 
 @lru_cache()
