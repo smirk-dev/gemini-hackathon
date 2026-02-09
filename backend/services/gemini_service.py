@@ -207,84 +207,106 @@ class GeminiService:
                 import vertexai
                 print(f"Initializing Vertex AI (project: {self.settings.google_cloud_project})...")
                 vertexai.init(project=self.settings.google_cloud_project, location="us-central1")
-                print(f"✅ Using Vertex AI (project: {self.settings.google_cloud_project})")
+                print(f"✅ Using Vertex AI with Application Default Credentials")
+                print(f"   Project: {self.settings.google_cloud_project}")
+                print(f"   Region: us-central1")
             except Exception as e:
-                print(f"⚠️ Vertex AI init failed: {e}")
-                print("⚠️ Falling back to AI Studio (if API key is available)")
-                self.settings.use_vertex_ai = False
-                api_key = get_gemini_api_key()
-                if api_key:
-                    genai.configure(api_key=api_key)
-                    print("✅ Using AI Studio with API key")
-                else:
-                    print("⚠️ No credentials available - API calls will fail")
+                print(f"❌ Vertex AI initialization failed: {e}")
+                print("This usually means:")
+                print("  1. Service account doesn't have 'Vertex AI User' role")
+                print("  2. Application Default Credentials not available")
+                print("  3. Network connectivity issue")
+                raise RuntimeError(
+                    f"Failed to initialize Vertex AI: {e}. "
+                    "Ensure the service account has 'roles/aiplatform.user' permission."
+                ) from e
         else:
             api_key = get_gemini_api_key()
             if api_key:
                 genai.configure(api_key=api_key)
-                print("✅ Using AI Studio with API key")
+                print("✅ Using AI Studio (Gemini API) with API key")
+                print(f"   Model: {self.settings.gemini_model}")
             else:
-                print("⚠️ No API key provided - using Vertex AI defaults")
+                raise RuntimeError(
+                    "No credentials available. Please provide either:\n"
+                    "  1. GEMINI_API_KEY for AI Studio API\n"
+                    "  2. Set USE_VERTEX_AI=true with proper GCP credentials for Vertex AI"
+                )
     
     @property
     def model(self):
         """Get or create the Gemini model instance."""
         if self._model is None:
-            # Build generation config
-            generation_config = genai.GenerationConfig(
-                temperature=0.7,
-                top_p=0.95,
-                top_k=40,
-                max_output_tokens=8192,
-            )
-            
-            # Create model with tools if registered
-            model_kwargs = {
-                "model_name": self.settings.gemini_model,
-                "generation_config": generation_config,
-            }
-            
-            # Add tools if any registered
-            if self._tool_declarations:
-                if self.use_vertex:
-                    model_kwargs["tools"] = _build_vertex_tools(self._tool_declarations)
-                else:
+            if not self.use_vertex:
+                # Using non-Vertex AI mode
+                # Build generation config
+                generation_config = genai.GenerationConfig(
+                    temperature=0.7,
+                    top_p=0.95,
+                    top_k=40,
+                    max_output_tokens=8192,
+                )
+                
+                # Create model with tools if registered
+                model_kwargs = {
+                    "model_name": self.settings.gemini_model,
+                    "generation_config": generation_config,
+                }
+                
+                # Add tools if any registered
+                if self._tool_declarations:
                     model_kwargs["tools"] = self._tool_declarations
-            
-            # Add Google Search grounding if enabled
-            if self.settings.enable_search_grounding:
-                google_search = None
-                if self.use_vertex:
-                    try:
-                        Tool = _safely_import_vertex_class("Tool")
-                        GoogleSearchRetrieval = _safely_import_vertex_class("GoogleSearchRetrieval")
-                        if Tool and GoogleSearchRetrieval:
-                            google_search = Tool(google_search_retrieval=GoogleSearchRetrieval())
-                    except Exception as e:
-                        print(f"⚠️ GoogleSearchRetrieval not available: {e}")
-                else:
+                
+                # Add Google Search grounding if enabled
+                if self.settings.enable_search_grounding:
                     try:
                         from google.generativeai.types import Tool
                         google_search = Tool.from_google_search_retrieval()
+                        if google_search:
+                            if "tools" in model_kwargs:
+                                model_kwargs["tools"].append(google_search)
+                            else:
+                                model_kwargs["tools"] = [google_search]
                     except Exception as e:
-                        print(f"⚠️ Google Search not available in AI Studio: {e}")
-
-                if google_search:
-                    if "tools" in model_kwargs:
-                        model_kwargs["tools"].append(google_search)
-                    else:
-                        model_kwargs["tools"] = [google_search]
-            
-            if self.use_vertex:
-                GenerativeModel = _safely_import_vertex_class("GenerativeModel")
-                if GenerativeModel:
-                    self._model = GenerativeModel(**model_kwargs)
-                else:
-                    print("⚠️ Vertex AI GenerativeModel not available, falling back to AI Studio")
-                    self.use_vertex = False
-                    self._model = genai.GenerativeModel(**model_kwargs)
-            else:
+                        print(f"⚠️ Google Search not available: {e}")
+                
                 self._model = genai.GenerativeModel(**model_kwargs)
+            else:
+                # Using Vertex AI mode - STRICT, no fallbacks
+                GenerativeModel = _safely_import_vertex_class("GenerativeModel")
+                if not GenerativeModel:
+                    raise RuntimeError(
+                        "Vertex AI GenerativeModel class not available. "
+                        "This indicates the vertexai SDK is not properly installed. "
+                        "Install with: pip install google-cloud-aiplatform"
+                    )
+                
+                from vertexai.generative_models import GenerationConfig
+                
+                # Build generation config for Vertex AI
+                generation_config = GenerationConfig(
+                    temperature=0.7,
+                    top_p=0.95,
+                    top_k=40,
+                    max_output_tokens=8192,
+                )
+                
+                # Create model with tools if registered
+                model_kwargs = {
+                    "model_name": self.settings.gemini_model,
+                    "generation_config": generation_config,
+                }
+                
+                # Add tools if any registered
+                if self._tool_declarations:
+                    vertex_tools = _build_vertex_tools(self._tool_declarations)
+                    if vertex_tools:  # Only add if conversion successful
+                        model_kwargs["tools"] = vertex_tools
+                
+                # Note: Google Search grounding in Vertex AI requires additional setup
+                # Skipping for now to avoid compatibility issues
+                
+                self._model = GenerativeModel(**model_kwargs)
         
         return self._model
     
@@ -354,19 +376,17 @@ class GeminiService:
             if system_instruction:
                 if self.use_vertex:
                     GenerativeModel = _safely_import_vertex_class("GenerativeModel")
-                    if GenerativeModel:
-                        tools = _build_vertex_tools(self._tool_declarations) if self._tool_declarations else None
-                        model = GenerativeModel(
-                            model_name=self.settings.gemini_model,
-                            system_instruction=system_instruction,
-                            tools=tools,
+                    if not GenerativeModel:
+                        raise RuntimeError(
+                            "Vertex AI GenerativeModel class not available. "
+                            "Install with: pip install google-cloud-aiplatform"
                         )
-                    else:
-                        model = genai.GenerativeModel(
-                            model_name=self.settings.gemini_model,
-                            system_instruction=system_instruction,
-                            tools=self._tool_declarations if self._tool_declarations else None,
-                        )
+                    tools = _build_vertex_tools(self._tool_declarations) if self._tool_declarations else None
+                    model = GenerativeModel(
+                        model_name=self.settings.gemini_model,
+                        system_instruction=system_instruction,
+                        tools=tools,
+                    )
                 else:
                     model = genai.GenerativeModel(
                         model_name=self.settings.gemini_model,
@@ -381,8 +401,12 @@ class GeminiService:
             if temperature is not None:
                 if self.use_vertex:
                     GenerationConfig = _safely_import_vertex_class("GenerationConfig")
-                    if GenerationConfig:
-                        gen_config = GenerationConfig(temperature=temperature)
+                    if not GenerationConfig:
+                        raise RuntimeError(
+                            "Vertex AI GenerationConfig class not available. "
+                            "Install with: pip install google-cloud-aiplatform"
+                        )
+                    gen_config = GenerationConfig(temperature=temperature)
                 else:
                     gen_config = genai.GenerationConfig(temperature=temperature)
             
@@ -447,23 +471,13 @@ class GeminiService:
                         # Send function result back to model
                         try:
                             if self.use_vertex:
-                                Part = _safely_import_vertex_class("Part")
-                                if Part:
-                                    from vertexai.generative_models import FunctionResponse
-                                    function_response = Part(
-                                        function_response=FunctionResponse(
-                                            name=function_name,
-                                            response={"result": json.dumps(tool_result)}
-                                        )
+                                from vertexai.generative_models import FunctionResponse, Part
+                                function_response = Part(
+                                    function_response=FunctionResponse(
+                                        name=function_name,
+                                        response={"result": json.dumps(tool_result)}
                                     )
-                                else:
-                                    # Fallback to AI Studio
-                                    function_response = genai.protos.Part(
-                                        function_response=genai.protos.FunctionResponse(
-                                            name=function_name,
-                                            response={"result": json.dumps(tool_result)}
-                                        )
-                                    )
+                                )
                             else:
                                 function_response = genai.protos.Part(
                                     function_response=genai.protos.FunctionResponse(
@@ -472,8 +486,10 @@ class GeminiService:
                                     )
                                 )
                         except Exception as e:
-                            print(f"⚠️ Error creating function response: {e}")
-                            continue
+                            print(f"❌ Error creating function response: {e}")
+                            raise RuntimeError(
+                                f"Failed to create function response for '{function_name}': {e}"
+                            ) from e
                         
                         # Get follow-up response
                         follow_up = await asyncio.to_thread(
@@ -623,14 +639,14 @@ class GeminiService:
             # Build generation config using appropriate SDK
             if self.use_vertex:
                 GenerationConfig = _safely_import_vertex_class("GenerationConfig")
-                if GenerationConfig:
-                    gen_config = GenerationConfig(
-                        temperature=temperature if temperature is not None else 0.7,
+                if not GenerationConfig:
+                    raise RuntimeError(
+                        "Vertex AI GenerationConfig class not available. "
+                        "Install with: pip install google-cloud-aiplatform"
                     )
-                else:
-                    gen_config = genai.GenerationConfig(
-                        temperature=temperature if temperature is not None else 0.7,
-                    )
+                gen_config = GenerationConfig(
+                    temperature=temperature if temperature is not None else 0.7,
+                )
             else:
                 gen_config = genai.GenerationConfig(
                     temperature=temperature if temperature is not None else 0.7,
@@ -682,10 +698,12 @@ class GeminiService:
             # Use appropriate SDK based on configuration
             if self.use_vertex:
                 GenerativeModel = _safely_import_vertex_class("GenerativeModel")
-                if GenerativeModel:
-                    model = GenerativeModel(**model_kwargs)
-                else:
-                    model = genai.GenerativeModel(**model_kwargs)
+                if not GenerativeModel:
+                    raise RuntimeError(
+                        "Vertex AI GenerativeModel class not available. "
+                        "Install with: pip install google-cloud-aiplatform"
+                    )
+                model = GenerativeModel(**model_kwargs)
             else:
                 model = genai.GenerativeModel(**model_kwargs)
             
