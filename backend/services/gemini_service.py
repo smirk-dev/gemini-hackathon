@@ -10,9 +10,14 @@ from vertexai.generative_models import (
     GenerationConfig,
     Tool,
     FunctionDeclaration,
-    GoogleSearchRetrieval,
     Part,
 )
+
+# GoogleSearchRetrieval was removed / renamed in newer SDK versions
+try:
+    from vertexai.generative_models import GoogleSearchRetrieval
+except ImportError:
+    GoogleSearchRetrieval = None
 
 # Handle version compatibility for Type and Schema
 try:
@@ -72,24 +77,37 @@ def _convert_json_schema_to_vertex(schema: Dict[str, Any]) -> Optional[Schema]:
         items = None
 
         if schema.get("properties") and isinstance(schema["properties"], dict):
-            properties = {
-                k: _convert_json_schema_to_vertex(v)
-                for k, v in schema["properties"].items()
-            }
+            properties = {}
+            for k, v in schema["properties"].items():
+                if v is not None and isinstance(v, dict):
+                    converted = _convert_json_schema_to_vertex(v)
+                    if converted is not None:
+                        properties[k] = converted
+            if not properties:
+                properties = None
 
         if schema.get("items") and isinstance(schema["items"], dict):
             items = _convert_json_schema_to_vertex(schema["items"])
 
-        return Schema(
-            type_=schema_type,
-            description=schema.get("description"),
-            properties=properties,
-            items=items,
-            required=schema.get("required"),
-            enum=schema.get("enum"),
-        )
+        # Build kwargs dict, only including non-None values to avoid
+        # pydantic "extra inputs" validation errors in newer SDK versions
+        kwargs: Dict[str, Any] = {"type_": schema_type}
+        if schema.get("description"):
+            kwargs["description"] = schema["description"]
+        if properties is not None:
+            kwargs["properties"] = properties
+        if items is not None:
+            kwargs["items"] = items
+        if schema.get("required"):
+            kwargs["required"] = schema["required"]
+        if schema.get("enum"):
+            kwargs["enum"] = schema["enum"]
+
+        return Schema(**kwargs)
     except Exception as e:
         print(f"⚠️ Error converting schema for Vertex AI: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -276,6 +294,8 @@ class GeminiService:
         prompt: str,
         tools: Optional[List[Dict[str, Any]]] = None,
         use_search_grounding: bool = False,
+        system_instruction: Optional[str] = None,
+        temperature: float = 0.7,
     ) -> Dict[str, Any]:
         """Generate response with tool use from Vertex AI.
         
@@ -283,6 +303,8 @@ class GeminiService:
             prompt: Input prompt
             tools: Optional list of tool definitions
             use_search_grounding: Whether to enable Google Search grounding
+            system_instruction: Optional system instruction for the model
+            temperature: Temperature for generation (default 0.7)
             
         Returns:
             Dictionary with response data and tool calls
@@ -290,7 +312,7 @@ class GeminiService:
         try:
             # Build model kwargs
             generation_config = GenerationConfig(
-                temperature=0.7,
+                temperature=temperature,
                 top_p=0.95,
                 top_k=40,
                 max_output_tokens=8192,
@@ -300,6 +322,10 @@ class GeminiService:
                 "model_name": self.settings.gemini_model,
                 "generation_config": generation_config,
             }
+            
+            # Add system instruction if provided
+            if system_instruction:
+                model_kwargs["system_instruction"] = system_instruction
             
             # Add tools
             model_tools = []
@@ -312,11 +338,11 @@ class GeminiService:
                 model_tools.extend(registered_tools)
             
             # Add Google Search grounding if enabled
-            if use_search_grounding:
+            if use_search_grounding and GoogleSearchRetrieval is not None:
                 try:
                     model_tools.append(Tool(google_search_retrieval=GoogleSearchRetrieval()))
                 except Exception as e:
-                    print(f"⚠️ GoogleSearchRetrieval not available: {e}")
+                    print(f"Warning: GoogleSearchRetrieval not available: {e}")
             
             if model_tools:
                 model_kwargs["tools"] = model_tools
@@ -330,26 +356,46 @@ class GeminiService:
                 prompt
             )
             
-            # Process response
+            # Process response - safely extract text (response.text raises ValueError
+            # when the response contains function calls instead of text)
+            try:
+                response_text = response.text if response.text else "No response"
+            except (ValueError, AttributeError):
+                response_text = ""
+            
             result = {
                 "success": True,
-                "message": response.text if response.text else "No response",
+                "message": response_text,
                 "citations": [],
                 "tools_used": [],
                 "raw_response": response,
             }
             
-            # Extract tool calls if any
+            # Extract tool calls and function_calls if any
+            function_calls = []
             if hasattr(response, 'candidates') and response.candidates:
                 for candidate in response.candidates:
-                    if hasattr(candidate, 'content'):
-                        if hasattr(candidate.content, 'parts'):
-                            for part in candidate.content.parts:
-                                if hasattr(part, 'function_call'):
+                    if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                        for part in candidate.content.parts:
+                            if hasattr(part, 'function_call') and part.function_call is not None:
+                                fc_name = getattr(part.function_call, 'name', None)
+                                fc_args = getattr(part.function_call, 'args', {})
+                                if fc_name:
                                     result["tools_used"].append({
-                                        "name": part.function_call.name,
-                                        "args": part.function_call.args,
+                                        "name": fc_name,
+                                        "args": dict(fc_args) if fc_args else {},
                                     })
+                                    function_calls.append({
+                                        "name": fc_name,
+                                        "arguments": dict(fc_args) if fc_args else {},
+                                    })
+            
+            # Add function_calls for chatbot_manager compatibility
+            if function_calls:
+                result["function_calls"] = function_calls
+            
+            # Also add "text" key as alias for "message" for compatibility
+            result["text"] = result["message"]
             
             return result
             
@@ -357,9 +403,11 @@ class GeminiService:
             print(f"❌ Error in generate_with_tools: {e}")
             import traceback
             traceback.print_exc()
+            error_msg = f"Error: {str(e)}"
             return {
                 "success": False,
-                "message": f"Error: {str(e)}",
+                "message": error_msg,
+                "text": error_msg,
                 "citations": [],
                 "tools_used": [],
             }
