@@ -43,7 +43,7 @@ steps:
       - 'us-central1'
       - '--allow-unauthenticated'
       - '--set-env-vars'
-      - 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID,DEBUG=false'
+      - 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID,DEBUG=false,USE_VERTEX_AI=true'
 
 images:
   - 'gcr.io/$PROJECT_ID/legalmind-backend:latest'

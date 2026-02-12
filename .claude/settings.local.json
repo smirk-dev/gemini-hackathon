@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add backend/main.py backend/config/settings.py backend/api/endpoints_new.py frontend/components/site-header.tsx frontend/public/assets/)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfix: Fix backend routing and improve API robustness\n\n- Switch backend to use app_new with correct endpoints_new module\n- Update endpoints_new to handle empty sessions gracefully\n- Update settings.py to use pydantic model_config pattern\n- Update site-header to use emoji logo \\(removes image dependency\\)\n- Copy image asset to frontend public directory for availability\n\nThis fixes:\n- 500 errors on /chat/sessions endpoint \\(now handles gracefully\\)\n- 500 errors on /chat endpoint \\(uses correct chatbot manager\\)\n- Missing logo issue \\(now renders emoji + image available\\)\n\nCo-Authored-By: Claude Haiku 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(gcloud builds submit:*)",
+      "Bash(gcloud builds log:*)",
+      "Bash(gcloud builds list:*)",
+      "Bash(gcloud run deploy:*)",
+      "Bash(gcloud run logs read:*)",
+      "Bash(gcloud logging read:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}
